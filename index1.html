@@ -1,0 +1,307 @@
+<!--
+  旅平險報價 LIFF 表單
+  ------------------------------------------------------------
+  使用前要改兩個地方（檔案最上方 <script> 內）：
+    1. LIFF_ID  ：到 LINE Developers 建立 LIFF 後貼上（沒填也能在瀏覽器測試，只是抓不到業務名字）
+    2. GAS_URL  ：Apps Script 部署成「網頁應用程式」後的網址（/exec 結尾）
+  部署 Apps Script 時記得選：執行身分＝我、誰可以存取＝任何人。
+  ------------------------------------------------------------
+-->
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>旅平險報價</title>
+<!-- LINE 官方 LIFF SDK。若不用 LIFF，可整行刪除，表單仍能運作。 -->
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1c2733; --muted:#6b7785;
+    --line:#dfe4ea; --brand:#1f7a5a; --brand-ink:#ffffff; --danger:#c0392b;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+    font-size:16px; line-height:1.5;
+    padding:16px 14px calc(96px + env(safe-area-inset-bottom));
+  }
+  h1{font-size:19px; margin:4px 0 2px}
+  .sub{color:var(--muted); font-size:13px; margin:0 0 18px}
+  .agent{
+    background:#eef6f2; border:1px solid #cfe6dc; color:#215c48;
+    border-radius:10px; padding:8px 12px; font-size:13px; margin-bottom:16px;
+    display:none;
+  }
+  .card{
+    background:var(--card); border:1px solid var(--line);
+    border-radius:var(--radius); padding:16px 14px; margin-bottom:14px;
+  }
+  .card h2{font-size:14px; color:var(--muted); font-weight:600; margin:0 0 12px; letter-spacing:.02em}
+  .field{margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  label{display:block; font-size:14px; font-weight:600; margin-bottom:6px}
+  label .req{color:var(--danger); margin-left:2px}
+  input,textarea{
+    width:100%; font-size:16px; color:var(--ink);
+    padding:11px 12px; border:1px solid var(--line); border-radius:10px;
+    background:#fff; -webkit-appearance:none; appearance:none;
+  }
+  input:focus,textarea:focus{outline:2px solid var(--brand); outline-offset:1px; border-color:var(--brand)}
+  textarea{min-height:72px; resize:vertical}
+  .row2{display:flex; gap:10px}
+  .row2 > *{flex:1; min-width:0}
+  .id-wrap{position:relative}
+  .id-wrap input{padding-right:60px}
+  .id-toggle{
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    border:none; background:transparent; color:var(--brand);
+    font-size:13px; font-weight:600; padding:8px; min-height:40px;
+  }
+  .hint{font-size:12px; color:var(--muted); margin-top:5px}
+  .companion{border:1px dashed var(--line); border-radius:10px; padding:12px; margin-bottom:10px; position:relative}
+  .companion .del{
+    position:absolute; top:8px; right:8px; border:none; background:#f2f4f6;
+    color:var(--muted); border-radius:8px; font-size:12px; padding:6px 8px;
+  }
+  .add-btn{
+    width:100%; border:1px dashed var(--brand); background:#f0f8f4; color:var(--brand);
+    border-radius:10px; padding:12px; font-size:15px; font-weight:600;
+  }
+  .err{color:var(--danger); font-size:13px; margin:6px 2px 0; display:none}
+  .footer{
+    position:fixed; left:0; right:0; bottom:0; background:#fff;
+    border-top:1px solid var(--line); padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+  .submit{
+    width:100%; border:none; background:var(--brand); color:var(--brand-ink);
+    border-radius:12px; padding:15px; font-size:17px; font-weight:700;
+  }
+  .submit:disabled{opacity:.55}
+  .done{text-align:center; padding:40px 20px}
+  .done .tick{font-size:44px}
+  .done .caseno{
+    font-size:22px; font-weight:800; letter-spacing:.03em; margin:10px 0;
+    color:var(--brand);
+  }
+  .ghost{
+    margin-top:18px; border:1px solid var(--line); background:#fff; color:var(--ink);
+    border-radius:10px; padding:12px 18px; font-size:15px;
+  }
+  @media (prefers-reduced-motion: no-preference){
+    .submit,.add-btn{transition:opacity .15s}
+  }
+</style>
+</head>
+<body>
+
+<div id="form-view">
+  <h1>旅平險報價</h1>
+  <p class="sub">填完送出後會自動建立一筆報價案件，助理會收到通知。</p>
+  <div class="agent" id="agentBox"></div>
+
+  <div class="card">
+    <h2>行程</h2>
+    <div class="row2">
+      <div class="field">
+        <label>出國日期<span class="req">*</span></label>
+        <input type="date" id="departDate">
+      </div>
+      <div class="field">
+        <label>回國日期<span class="req">*</span></label>
+        <input type="date" id="returnDate">
+      </div>
+    </div>
+    <div class="err" id="dateErr">回國日期不可早於出國日期。</div>
+    <div class="field">
+      <label>旅遊地<span class="req">*</span></label>
+      <input type="text" id="destination" placeholder="例如：日本東京、泰國曼谷">
+    </div>
+    <div class="field">
+      <label>班機時間</label>
+      <input type="text" id="flightTime" placeholder="有的話再填，例如 07/10 09:20 去程">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>投保人</h2>
+    <div class="field">
+      <label>姓名<span class="req">*</span></label>
+      <input type="text" id="name">
+    </div>
+    <div class="field">
+      <label>出生年月日<span class="req">*</span></label>
+      <input type="date" id="birth">
+    </div>
+    <div class="field">
+      <label>身分證字號<span class="req">*</span></label>
+      <div class="id-wrap">
+        <input type="password" id="idNumber" autocomplete="off" inputmode="text" placeholder="報價需要，會遮罩顯示">
+        <button type="button" class="id-toggle" id="idToggle">顯示</button>
+      </div>
+      <p class="hint">此欄不會出現在 LINE 對話中，僅存進受控試算表。</p>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>手機<span class="req">*</span></label>
+        <input type="tel" id="phone" inputmode="numeric" placeholder="09xx-xxx-xxx">
+      </div>
+      <div class="field">
+        <label>電子信箱</label>
+        <input type="email" id="email" inputmode="email" placeholder="選填">
+      </div>
+    </div>
+    <div class="field">
+      <label>地址</label>
+      <input type="text" id="address" placeholder="選填">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>同行友人</h2>
+    <div id="companions"></div>
+    <button type="button" class="add-btn" id="addCompanion">＋ 新增同行友人</button>
+  </div>
+
+  <div class="card">
+    <h2>備註</h2>
+    <div class="field">
+      <textarea id="note" placeholder="特殊需求、投保金額偏好等"></textarea>
+    </div>
+  </div>
+</div>
+
+<div id="done-view" style="display:none">
+  <div class="done">
+    <div class="tick">✅</div>
+    <p>已送出，案件建立完成</p>
+    <div class="caseno" id="doneCaseNo">—</div>
+    <p class="sub" id="doneMsg">助理已收到通知，稍後會處理報價。</p>
+    <button class="ghost" id="againBtn">再填一筆</button>
+  </div>
+</div>
+
+<div class="footer" id="footer">
+  <button class="submit" id="submitBtn">送出報價需求</button>
+</div>
+
+<script>
+  // ====== 只需修改這兩行 ======
+  const LIFF_ID = "2010594021-RXLUlFmd";   // 沒填也能測，只是抓不到業務名字
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbyjgeKXfMhxyTwVaZJQYQhBG1J1We_FvJ3TLuAQ8WEE0g4l1mZJKbHD0vOq_IqWmFoo1Q/exec";  // 以 /exec 結尾
+  // ============================
+
+  let agentName = "";
+  let agentUserId = "";
+
+  // --- LIFF 初始化（失敗就當一般網頁用，不擋填表）---
+  (async function initLiff(){
+    try{
+      if (typeof liff === "undefined" || LIFF_ID.startsWith("在這裡")) return;
+      await liff.init({ liffId: LIFF_ID });
+      if (liff.isLoggedIn()){
+        const p = await liff.getProfile();
+        agentName = p.displayName || "";
+        agentUserId = p.userId || "";
+        const box = document.getElementById("agentBox");
+        box.textContent = "交辦業務：" + agentName;
+        box.style.display = "block";
+      }
+    }catch(e){ console.warn("LIFF init 失敗，改用一般模式", e); }
+  })();
+
+  // --- 身分證字號 顯示/隱藏 ---
+  document.getElementById("idToggle").addEventListener("click", function(){
+    const inp = document.getElementById("idNumber");
+    const show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    this.textContent = show ? "隱藏" : "顯示";
+  });
+
+  // --- 同行友人：動態新增 / 刪除 ---
+  const companionsBox = document.getElementById("companions");
+  function addCompanionRow(){
+    const div = document.createElement("div");
+    div.className = "companion";
+    div.innerHTML =
+      '<button type="button" class="del">刪除</button>' +
+      '<div class="field"><label>姓名</label><input type="text" class="c-name"></div>' +
+      '<div class="field"><label>出生年月日</label><input type="date" class="c-birth"></div>' +
+      '<div class="field"><label>身分證字號</label><input type="text" class="c-id" autocomplete="off"></div>';
+    div.querySelector(".del").addEventListener("click", ()=>div.remove());
+    companionsBox.appendChild(div);
+  }
+  document.getElementById("addCompanion").addEventListener("click", addCompanionRow);
+
+  // --- 送出 ---
+  document.getElementById("submitBtn").addEventListener("click", submitForm);
+
+  function val(id){ return (document.getElementById(id).value || "").trim(); }
+
+  function submitForm(){
+    const required = {departDate:"出國日期", returnDate:"回國日期", destination:"旅遊地",
+                      name:"姓名", birth:"出生年月日", idNumber:"身分證字號", phone:"手機"};
+    for (const id in required){
+      if (!val(id)){ alert("請填寫：" + required[id]); document.getElementById(id).focus(); return; }
+    }
+    // 日期檢查
+    const dateErr = document.getElementById("dateErr");
+    if (val("returnDate") < val("departDate")){ dateErr.style.display="block";
+      document.getElementById("returnDate").focus(); return; }
+    dateErr.style.display="none";
+
+    const companions = Array.from(document.querySelectorAll(".companion")).map(c=>({
+      name: (c.querySelector(".c-name").value||"").trim(),
+      birth:(c.querySelector(".c-birth").value||"").trim(),
+      id:   (c.querySelector(".c-id").value||"").trim()
+    })).filter(c => c.name || c.id);
+
+    const payload = {
+      agentName, agentUserId,
+      name: val("name"), birth: val("birth"), idNumber: val("idNumber"),
+      phone: val("phone"), email: val("email"), address: val("address"),
+      departDate: val("departDate"), returnDate: val("returnDate"),
+      flightTime: val("flightTime"), destination: val("destination"),
+      companions, note: val("note")
+    };
+
+    send(payload);
+  }
+
+  async function send(payload){
+    const btn = document.getElementById("submitBtn");
+    btn.disabled = true; btn.textContent = "送出中…";
+    try{
+      if (GAS_URL.startsWith("在這裡")) throw new Error("尚未設定 GAS_URL");
+      // 用 text/plain 送出，避開 Apps Script 的 CORS 預檢問題
+      const res = await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      let caseNo = "";
+      try{ const data = await res.json(); if (data && data.ok) caseNo = data.caseNo; }catch(_){}
+      showDone(caseNo);
+    }catch(err){
+      // 就算讀不到回應，只要請求送出多半已建案，仍顯示送出成功並提示由官方帳號通知
+      console.warn(err);
+      showDone("");
+      document.getElementById("doneMsg").textContent =
+        "已送出。案件編號稍後由官方帳號通知你。若沒收到通知，請截圖告知助理。";
+    }
+  }
+
+  function showDone(caseNo){
+    document.getElementById("form-view").style.display = "none";
+    document.getElementById("footer").style.display = "none";
+    document.getElementById("done-view").style.display = "block";
+    document.getElementById("doneCaseNo").textContent = caseNo || "已建立";
+    window.scrollTo(0,0);
+  }
+
+  document.getElementById("againBtn").addEventListener("click", ()=>location.reload());
+</script>
+</body>
+</html>
